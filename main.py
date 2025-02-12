@@ -6,10 +6,8 @@ import os
 
 # Enable necessary Discord intents
 intents = discord.Intents.default()
-intents.message_content = True  # REQUIRED to read message content
-intents.guilds = True
-intents.members = True
-
+intents.message_content = True
+intents.voice_states = True
 
 # Set up bot with intents
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -22,7 +20,8 @@ def extract_playlist_urls(playlist_url):
     ydl_opts = {
         'quiet': True,
         'extract_flat': True,  # Don't download, just get URLs
-        'force_generic_extractor': True
+        'force_generic_extractor': True,
+        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(playlist_url, download=False)
@@ -37,6 +36,7 @@ def search_youtube(query):
         'default_search': 'ytsearch',
         'noplaylist': True,
         'format': 'bestaudio/best',
+        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
@@ -67,6 +67,7 @@ async def play_url(ctx, url):
         'format': 'bestaudio/best',
         'quiet': True,
         'extract_flat': False,
+        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -120,22 +121,6 @@ async def skip(ctx):
         await ctx.send("⏭️ Skipped to the next song!")
         await play_next(ctx)
 
-# Command to pause the current song
-@bot.command()
-async def pause(ctx):
-    voice_client = ctx.voice_client
-    if voice_client and voice_client.is_playing():
-        voice_client.pause()
-        await ctx.send("⏸️ Music paused.")
-
-# Command to resume the paused song
-@bot.command()
-async def resume(ctx):
-    voice_client = ctx.voice_client
-    if voice_client and voice_client.is_paused():
-        voice_client.resume()
-        await ctx.send("▶️ Music resumed.")
-
 # Command to stop music and clear the queue
 @bot.command()
 async def stop(ctx):
@@ -150,6 +135,5 @@ async def on_ready():
     print(f"✅ Bot is online as {bot.user}")
 
 # Run bot using an environment variable
-keep_alive()
 TOKEN = os.getenv("DISCORD_TOKEN")  # Set your token in Replit's Secrets
 bot.run(TOKEN)

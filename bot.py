@@ -5,6 +5,7 @@ import asyncio
 import os
 from flask import Flask
 from threading import Thread
+import google.generativeai as genai
 
 # Flask server setup
 app = Flask('')
@@ -19,6 +20,15 @@ def run():
 def keep_alive():
     t = Thread(target=run)
     t.start()
+
+# Configure Gemini API
+genai.configure(api_key="YOUR_GEMINI_API_KEY")
+
+# Function to get Gemini response
+async def get_gemini_response(prompt):
+    model = genai.GenerativeModel('gemini-pro')
+    response = model.generate_content(prompt)
+    return response.text
 
 # Enable necessary Discord intents
 intents = discord.Intents.default()
@@ -179,6 +189,13 @@ async def loop(ctx):
     status = "enabled" if loop_enabled else "disabled"
     await ctx.send(f"🔁 Loop is now **{status}**.")
 
+# Command to chat with Gemini
+@bot.command()
+async def chat(ctx, *, message: str):
+    await ctx.send("🤖 Thinking...")
+    response = await get_gemini_response(message)
+    await ctx.send(f"💬 {response}")
+
 # Custom help command
 @bot.command()
 async def help(ctx):
@@ -191,6 +208,7 @@ async def help(ctx):
 **!resume** - Resume the paused song.
 **!stop** - Stop the music, clear the queue, and disconnect the bot.
 **!loop** - Toggle looping for the current song.
+**!chat <message>** - Chat with the Gemini AI.
 **!help** - Show this help message.
 
 🔗 **Examples**:
@@ -198,6 +216,7 @@ async def help(ctx):
 - `!play https://www.youtube.com/watch?v=dQw4w9WgXcQ`
 - `!skip`
 - `!loop`
+- `!chat What's the weather like today?`
 """
     await ctx.send(help_message)
 

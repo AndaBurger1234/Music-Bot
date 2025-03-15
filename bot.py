@@ -1,28 +1,35 @@
 import discord
 from discord.ext import commands
-import yt_dlp
 import asyncio
 import os
-import google.generativeai as genai
-
 from flask import Flask
 from threading import Thread
+import google.generativeai as genai
+from pytube import YouTube
+from pytube.exceptions import PytubeError
 
+# Flask server setup
 app = Flask('')
-
 
 @app.route('/')
 def home():
-    return "Keep Quiet --> Brimstone<br>(bot online btw...)"
-
+    return "Bot is alive!"
 
 def run():
     app.run(host='0.0.0.0', port=8080)
 
-
 def keep_alive():
     t = Thread(target=run)
     t.start()
+
+# Configure Gemini API
+genai.configure(api_key="YOUR_GEMINI_API_KEY")
+
+# Function to get Gemini response
+async def get_gemini_response(prompt):
+    model = genai.GenerativeModel('gemini-pro')
+    response = model.generate_content(prompt)
+    return response.text
 
 # Enable necessary Discord intents
 intents = discord.Intents.default()
@@ -40,66 +47,21 @@ song_queue = []
 # Global loop flag
 loop_enabled = False
 
-# Configure Google's Gemini API
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Add your Gemini API key to Replit Secrets or .env
-genai.configure(api_key=GEMINI_API_KEY)
-
-# Dictionary to store conversation history for each user
-conversation_history = {}
-
-# Function to get Gemini chatbot response with context
-async def get_gemini_response(user_id, prompt):
-    try:
-        # Get the user's conversation history
-        if user_id not in conversation_history:
-            conversation_history[user_id] = []
-
-        # Add the new message to the conversation history in the correct format
-        conversation_history[user_id].append({"parts": [{"text": prompt}], "role": "user"})
-
-        # Generate a response using the conversation history
-        model = genai.GenerativeModel('gemini-1.5-flash')  # Use the appropriate model
-        response = model.generate_content(conversation_history[user_id])
-
-        # Add the bot's response to the conversation history in the correct format
-        conversation_history[user_id].append({"parts": [{"text": response.text}], "role": "model"})
-
-        return response.text
-    except Exception as e:
-        print(f"Error getting Gemini response: {e}")
-        return "Sorry, I couldn't process your request."
-
 # Function to extract video URLs from a YouTube playlist
 def extract_playlist_urls(playlist_url):
-    ydl_opts = {
-        'quiet': True,
-        'extract_flat': True,  # Don't download, just get URLs
-        'force_generic_extractor': True
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(playlist_url, download=False)
-        if "entries" in info:
-            return [entry["url"] for entry in info["entries"] if entry.get("url")]
-    return []
+    try:
+        yt = YouTube(playlist_url)
+        return [playlist_url]  # pytube doesn't support playlists directly, so treat as single video
+    except PytubeError:
+        return []
 
 # Function to search YouTube for a video URL
 def search_youtube(query):
-    ydl_opts = {
-        'quiet': True,
-        'default_search': 'ytsearch',
-        'noplaylist': True,
-        'format': 'bestaudio/best',
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(query, download=False)
-        if "entries" in info and len(info["entries"]) > 0:
-            # Extract the URL of the first search result
-            first_entry = info["entries"][0]
-            if "url" in first_entry:
-                return first_entry["url"]
-            elif "webpage_url" in first_entry:
-                return first_entry["webpage_url"]
-    return None
+    try:
+        yt = YouTube(query)
+        return yt.watch_url
+    except PytubeError:
+        return None
 
 # Function to play the next song in the queue
 async def play_next(ctx):
@@ -120,30 +82,32 @@ async def play_url(ctx, url):
         channel = ctx.author.voice.channel
         voice_client = await channel.connect()
 
-    # Use yt-dlp to extract the direct audio stream URL
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-        'extract_flat': False,
-    }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        if 'url' in info:
-            audio_url = info['url']
-        else:
-            await ctx.send("❌ Could not extract audio URL.")
+    try:
+        # Use pytube to extract the audio stream URL
+        yt = YouTube(url)
+        audio_stream = yt.streams.filter(only_audio=True).first()
+        if not audio_stream:
+            await ctx.send("❌ Could not extract audio stream.")
             return
 
-    # Play the audio using FFmpeg
-    ffmpeg_options = {
-        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-        'options': '-vn',
-    }
-    audio_source = discord.FFmpegPCMAudio(audio_url, **ffmpeg_options)
+        # Download the audio stream
+        audio_file = audio_stream.download(filename="audio.mp3")
 
-    if not voice_client.is_playing():
-        voice_client.play(audio_source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop))
-        await ctx.send(f"🎶 Now playing: {info.get('title', 'Unknown Title')}")
+        # Play the audio using FFmpeg
+        ffmpeg_options = {
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+            'options': '-vn',
+        }
+        audio_source = discord.FFmpegPCMAudio(audio_file, **ffmpeg_options)
+
+        if not voice_client.is_playing():
+            voice_client.play(audio_source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(ctx), bot.loop))
+            await ctx.send(f"🎶 Now playing: {yt.title}")
+
+        # Clean up the downloaded file
+        os.remove(audio_file)
+    except PytubeError as e:
+        await ctx.send(f"❌ Error: {str(e)}")
 
 # Command to play a song or playlist
 @bot.command()
@@ -215,9 +179,8 @@ async def loop(ctx):
 # Command to chat with Gemini
 @bot.command()
 async def chat(ctx, *, message: str):
-    user_id = ctx.author.id  # Get the user's ID
-    await ctx.send("🤖 Thinking...")  # Let the user know the bot is processing
-    response = await get_gemini_response(user_id, message)
+    await ctx.send("🤖 Thinking...")
+    response = await get_gemini_response(message)
     await ctx.send(f"💬 {response}")
 
 # Custom help command

@@ -15,6 +15,7 @@ opuslib = ">=3.0.1"
 python-dotenv = ">=1.0.1"
 requests = ">=2.32.3"
 yt-dlp = ">=2025.1.26"
+pynacl = ">=1.5.0"  # Add this line for pynacl
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

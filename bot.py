@@ -3,36 +3,26 @@ from discord.ext import commands
 import yt_dlp
 import asyncio
 import os
+import google.generativeai as genai
+
 from flask import Flask
 from threading import Thread
-import google.generativeai as genai
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-import json
-import time
 
-# Flask server setup
 app = Flask('')
+
 
 @app.route('/')
 def home():
-    return "Bot is alive!"
+    return "Keep Quiet --> Brimstone<br>(bot online btw...)"
+
 
 def run():
     app.run(host='0.0.0.0', port=8080)
 
+
 def keep_alive():
     t = Thread(target=run)
     t.start()
-
-# Configure Gemini API
-genai.configure(api_key="YOUR_GEMINI_API_KEY")
-
-# Function to get Gemini response
-async def get_gemini_response(prompt):
-    model = genai.GenerativeModel('gemini-pro')
-    response = model.generate_content(prompt)
-    return response.text
 
 # Enable necessary Discord intents
 intents = discord.Intents.default()
@@ -50,48 +40,41 @@ song_queue = []
 # Global loop flag
 loop_enabled = False
 
-# Function to extract cookies using Selenium
-def extract_cookies():
-    # Set up Selenium with a headless browser
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Run in headless mode
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
+# Configure Google's Gemini API
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # Add your Gemini API key to Replit Secrets or .env
+genai.configure(api_key=GEMINI_API_KEY)
 
-    # Initialize the WebDriver (make sure chromedriver is installed and in PATH)
-    driver = webdriver.Chrome(options=chrome_options)
+# Dictionary to store conversation history for each user
+conversation_history = {}
 
+# Function to get Gemini chatbot response with context
+async def get_gemini_response(user_id, prompt):
     try:
-        # Open YouTube and wait for manual login
-        driver.get("https://www.youtube.com")
-        print("Please log in to YouTube in the browser window...")
-        time.sleep(30)  # Wait for manual login (adjust time as needed)
+        # Get the user's conversation history
+        if user_id not in conversation_history:
+            conversation_history[user_id] = []
 
-        # Extract cookies
-        cookies = driver.get_cookies()
-        with open("cookies.txt", "w") as f:
-            json.dump(cookies, f)
-        print("Cookies extracted and saved to cookies.txt")
-    finally:
-        driver.quit()
+        # Add the new message to the conversation history in the correct format
+        conversation_history[user_id].append({"parts": [{"text": prompt}], "role": "user"})
 
-# Function to load cookies into yt-dlp
-def load_cookies():
-    if not os.path.exists("cookies.txt"):
-        extract_cookies()  # Extract cookies if the file doesn't exist
+        # Generate a response using the conversation history
+        model = genai.GenerativeModel('gemini-1.5-flash')  # Use the appropriate model
+        response = model.generate_content(conversation_history[user_id])
 
-    with open("cookies.txt", "r") as f:
-        cookies = json.load(f)
-    return cookies
+        # Add the bot's response to the conversation history in the correct format
+        conversation_history[user_id].append({"parts": [{"text": response.text}], "role": "model"})
+
+        return response.text
+    except Exception as e:
+        print(f"Error getting Gemini response: {e}")
+        return "Sorry, I couldn't process your request."
 
 # Function to extract video URLs from a YouTube playlist
 def extract_playlist_urls(playlist_url):
     ydl_opts = {
         'quiet': True,
         'extract_flat': True,  # Don't download, just get URLs
-        'force_generic_extractor': True,
-        'cookiefile': 'cookies.txt',  # Use cookies
+        'force_generic_extractor': True
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(playlist_url, download=False)
@@ -106,7 +89,6 @@ def search_youtube(query):
         'default_search': 'ytsearch',
         'noplaylist': True,
         'format': 'bestaudio/best',
-        'cookiefile': 'cookies.txt',  # Use cookies
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
@@ -143,7 +125,6 @@ async def play_url(ctx, url):
         'format': 'bestaudio/best',
         'quiet': True,
         'extract_flat': False,
-        'cookiefile': 'cookies.txt',  # Use cookies
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -234,8 +215,9 @@ async def loop(ctx):
 # Command to chat with Gemini
 @bot.command()
 async def chat(ctx, *, message: str):
-    await ctx.send("🤖 Thinking...")
-    response = await get_gemini_response(message)
+    user_id = ctx.author.id  # Get the user's ID
+    await ctx.send("🤖 Thinking...")  # Let the user know the bot is processing
+    response = await get_gemini_response(user_id, message)
     await ctx.send(f"💬 {response}")
 
 # Custom help command

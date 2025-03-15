@@ -3,25 +3,45 @@ from discord.ext import commands
 import yt_dlp
 import asyncio
 import os
+from flask import Flask
+from threading import Thread
+
+# Flask server setup
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
 # Enable necessary Discord intents
 intents = discord.Intents.default()
-intents.message_content = True
-intents.voice_states = True
+intents.message_content = True  # REQUIRED to read message content
+intents.guilds = True
+intents.members = True
 
 # Set up bot with intents
 bot = commands.Bot(command_prefix="!", intents=intents)
+bot.remove_command("help")  # Disable the default help command
 
 # Queue for storing songs
 song_queue = []
+
+# Global loop flag
+loop_enabled = False
 
 # Function to extract video URLs from a YouTube playlist
 def extract_playlist_urls(playlist_url):
     ydl_opts = {
         'quiet': True,
         'extract_flat': True,  # Don't download, just get URLs
-        'force_generic_extractor': True,
-        'cookiefile': 'cookies.txt',  # Use cookies for authentication
+        'force_generic_extractor': True
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(playlist_url, download=False)
@@ -36,7 +56,6 @@ def search_youtube(query):
         'default_search': 'ytsearch',
         'noplaylist': True,
         'format': 'bestaudio/best',
-        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
@@ -51,9 +70,15 @@ def search_youtube(query):
 
 # Function to play the next song in the queue
 async def play_next(ctx):
+    global song_queue, loop_enabled
+
     if song_queue:
         url = song_queue.pop(0)
         await play_url(ctx, url)
+
+        # If looping is enabled, re-add the song to the end of the queue
+        if loop_enabled:
+            song_queue.append(url)
 
 # Function to play an individual URL
 async def play_url(ctx, url):
@@ -67,7 +92,6 @@ async def play_url(ctx, url):
         'format': 'bestaudio/best',
         'quiet': True,
         'extract_flat': False,
-        'cookiefile': 'cookies.txt',  # Use cookies for authentication
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -121,19 +145,67 @@ async def skip(ctx):
         await ctx.send("⏭️ Skipped to the next song!")
         await play_next(ctx)
 
+# Command to pause the current song
+@bot.command()
+async def pause(ctx):
+    voice_client = ctx.voice_client
+    if voice_client and voice_client.is_playing():
+        voice_client.pause()
+        await ctx.send("⏸️ Music paused.")
+
+# Command to resume the paused song
+@bot.command()
+async def resume(ctx):
+    voice_client = ctx.voice_client
+    if voice_client and voice_client.is_paused():
+        voice_client.resume()
+        await ctx.send("▶️ Music resumed.")
+
 # Command to stop music and clear the queue
 @bot.command()
 async def stop(ctx):
-    global song_queue
+    global song_queue, loop_enabled
     song_queue.clear()
+    loop_enabled = False  # Disable looping when stopping
     if ctx.voice_client:
         await ctx.voice_client.disconnect()
-    await ctx.send("⏹️ Music stopped and queue cleared.")
+    await ctx.send("⏹️ Music stopped, queue cleared, and loop disabled.")
+
+# Command to toggle looping
+@bot.command()
+async def loop(ctx):
+    global loop_enabled
+    loop_enabled = not loop_enabled  # Toggle the loop flag
+    status = "enabled" if loop_enabled else "disabled"
+    await ctx.send(f"🔁 Loop is now **{status}**.")
+
+# Custom help command
+@bot.command()
+async def help(ctx):
+    help_message = """
+🎶 **Music Bot Commands** 🎶
+
+**!play <query or URL>** - Play a song or add it to the queue. You can use a YouTube URL or search for a song by name.
+**!skip** - Skip the currently playing song.
+**!pause** - Pause the currently playing song.
+**!resume** - Resume the paused song.
+**!stop** - Stop the music, clear the queue, and disconnect the bot.
+**!loop** - Toggle looping for the current song.
+**!help** - Show this help message.
+
+🔗 **Examples**:
+- `!play Never Gonna Give You Up`
+- `!play https://www.youtube.com/watch?v=dQw4w9WgXcQ`
+- `!skip`
+- `!loop`
+"""
+    await ctx.send(help_message)
 
 @bot.event
 async def on_ready():
     print(f"✅ Bot is online as {bot.user}")
 
 # Run bot using an environment variable
+keep_alive()
 TOKEN = os.getenv("DISCORD_TOKEN")  # Set your token in Replit's Secrets
 bot.run(TOKEN)
